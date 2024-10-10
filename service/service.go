@@ -6,6 +6,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"strconv"
 	"taskBackDev/config"
 	"taskBackDev/entity"
 	"taskBackDev/storage"
@@ -23,50 +24,9 @@ func NewService(storage *storage.Storage, cfg *config.Config) *Service {
 	}
 }
 
-func (s *Service) SingIn(ctx context.Context, id uuid.UUID) (entity.TokenResponse, error) {
-	return s.createSession(ctx, id)
-}
-
-func (s *Service) createSession(ctx context.Context, id uuid.UUID) (entity.TokenResponse, error) {
-	var (
-		resp entity.TokenResponse
-		err  error
-	)
-
-	resp.AccessToken, err = s.NewJWT(id.String(), AccessTokenTTL)
-	if err != nil {
-		return entity.TokenResponse{}, err
-	}
-	resp.RefreshToken, err = s.NewRefreshToken()
-	if err != nil {
-		return entity.TokenResponse{}, err
-	}
-
-	session := entity.Session{
-		RefreshToken: resp.RefreshToken,
-		ExpiresAt:    time.Now().Add(time.Hour * 48),
-	}
-	err = s.storage.SetSession(ctx, id, session)
-	if err != nil {
-		return entity.TokenResponse{}, err
-	}
-	return resp, nil
-}
-
-var AccessTokenTTL time.Duration
-
-func (s *Service) GetAccessToken(userID string) (string, error) {
-	accessToken, err := s.NewJWT(userID, AccessTokenTTL)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", "Get Access Token", err)
-	}
-
-	return accessToken, nil
-}
-
-func (s *Service) NewJWT(id string, ttl time.Duration) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodES512, jwt.MapClaims{
-		"id":         id,
+func (s *Service) NewJWT(name string, ttl time.Duration) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{
+		"id":         name,
 		"expires_at": jwt.NewNumericDate(time.Now().Add(ttl)),
 	})
 
@@ -113,14 +73,19 @@ func (s *Service) Parse(accessToken string) (string, error) {
 	return claims["sub"].(string), nil
 }
 
-func (s *Service) RefreshTokens(ctx context.Context, id string) (entity.TokenResponse, error) {
+func (s *Service) Tokens(ctx context.Context, name string, id int64) (entity.TokenResponse, error) {
 	session, err := s.storage.TokenByUserID(ctx, id)
 	if err != nil {
 		return entity.TokenResponse{}, err
 	}
-	accessToken, err := s.NewJWT(id, AccessTokenTTL)
+
+	at, err := s.NewJWT(name, s.cfg.AccessTokenTTL)
 	if err != nil {
 		return entity.TokenResponse{}, fmt.Errorf("%s: %w", "Get Access Token", err)
+	}
+	accessToken, err := strconv.ParseInt(at, 10, 64)
+	if err != nil {
+		return entity.TokenResponse{}, err
 	}
 	tokenResponse := entity.TokenResponse{
 		AccessToken:  session.RefreshToken,
@@ -128,14 +93,53 @@ func (s *Service) RefreshTokens(ctx context.Context, id string) (entity.TokenRes
 	}
 	return tokenResponse, nil
 }
-func (s *Service) SwitchToken(ctx context.Context, newToken string, userID string) error {
-	oldToken, err := s.storage.TokenByUserID(ctx, userID)
+
+func (s *Service) CreateToken(ctx context.Context, userID int64, ipName string) (entity.TokenResponse, error) {
+	refresh, err := s.NewRefreshToken()
 	if err != nil {
-		return err
+		return entity.TokenResponse{}, err
 	}
-	err = checkRefreshToken(newToken, oldToken.RefreshToken)
+	session := entity.Session{
+		UserID:       userID,
+		UserName:     ipName,
+		RefreshToken: refresh,
+		ExpiresAt:    time.Now().Add(s.cfg.RefreshTokenTTL),
+		IsUsed:       false,
+	}
+	err = s.storage.SaveToken(ctx, session)
 	if err != nil {
-		return err
+		return entity.TokenResponse{}, err
 	}
-	return nil
+
+	at, err := s.NewJWT(ipName, s.cfg.AccessTokenTTL)
+	if err != nil {
+		return entity.TokenResponse{}, fmt.Errorf("%s: %w", "Get Access Token", err)
+	}
+
+	accessToken, err := strconv.ParseInt(at, 10, 64)
+	if err != nil {
+		return entity.TokenResponse{}, err
+	}
+	tokenResponse := entity.TokenResponse{
+		AccessToken:  session.RefreshToken,
+		RefreshToken: accessToken,
+	}
+	return tokenResponse, nil
+}
+
+func (s *Service) SwitchToken(ctx context.Context, tokenCookie string, ipName string) (int64, error) {
+	oldToken, err := s.storage.TokenByUserIP(ctx, ipName)
+	if err != nil {
+		return 0, err
+	}
+	err = checkRefreshToken(tokenCookie, oldToken.RefreshToken)
+	if err != nil {
+		return 0, err
+	}
+
+	err = s.storage.UpdateToken(ctx, oldToken)
+	if err != nil {
+		return 0, err
+	}
+	return oldToken.UserID, nil
 }

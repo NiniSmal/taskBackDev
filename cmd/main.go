@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"taskBackDev/api"
 	"taskBackDev/config"
 	"taskBackDev/service"
+	"taskBackDev/service/send_service"
 	"taskBackDev/storage"
 )
 
@@ -37,11 +38,13 @@ func main() {
 	defer conn.Close()
 	st := storage.NewStorage(conn)
 	server := service.NewService(st, cfg)
-	handler := api.NewHandler(server)
-	r := gin.Default()
-	r.GET("/sing_in", handler.SingIn)
-	r.GET("/refresh", handler.Refresh)
-	err = r.Run(fmt.Sprintf("localhost:%d", cfg.Port))
+	sendService := send_service.NewSendService(cfg.Email, cfg.Password)
+	handler := api.NewHandler(server, cfg, sendService)
+	r := http.NewServeMux()
+
+	r.HandleFunc("GET /auth", handler.AuthHandler())
+	r.HandleFunc("GET /refresh", handler.Refresh)
+	err = http.ListenAndServe(fmt.Sprintf(":%d", cfg.Port), r)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,18 +1,12 @@
 -- +goose Up
-CREATE TABLE users(
-    id uuid PRIMARY KEY,
-    name TEXT,
-    email TEXT,
-    password TEXT,
-    created_at timestamp
-);
 
 CREATE TABLE sessions(
-  user_id TEXT PRIMARY KEY,
+  user_id BIGINT,
+    user_name TEXT,
   refresh_token TEXT,
-  expires_at timestamp
+  expires_at timestamp,
+  PRIMARY KEY(user_id, refresh_token)
 );
 
 --+goose Down
 DROP TABLE sessions;
-DROP TABLE users;

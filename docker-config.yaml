@@ -1,0 +1,6 @@
+port: 8022
+postgres: postgres://postgres:dev@localhost:8025/postgres?sslmode=disable
+email: mina@mail.ru
+password: abcdefgh11
+refresh_token_ttl: 720h
+access_token_ttl: 15m
